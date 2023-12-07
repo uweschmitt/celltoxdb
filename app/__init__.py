@@ -21,7 +21,8 @@ migrate = Migrate(app,db)
 cache = Cache(app)
 
 from app.plotlydash.dashboard import create_dashboard
-app = create_dashboard(app)
+if db.engine.dialect.has_table(db.engine, "exposure"):
+    app = create_dashboard(app)
 
 # Compile CSS
 #from app.assets import compile_assets
@@ -41,5 +42,8 @@ def set_sqlite_pragma(dbapi_connection, connection_record):
     cursor.close()
 """
 
-from . import views
+if db.engine.dialect.has_table(db.engine, "exposure"):
+    from . import views
+
+
 

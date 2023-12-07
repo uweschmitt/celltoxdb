@@ -1,0 +1,5 @@
+short_name,full_name,organism,tissue
+GIL,RTgill-W1,O. mykiss,gill
+GUT,RTgutGC,O. mykiss,gut
+LIV,RTL-W1,O. mykiss,liver
+GUF,RTgut-F,O. mykiss,gut

@@ -15,7 +15,7 @@ def log_button(ename):
     return dcc.RadioItems(
                     id=ename,
                     options=[{'label': i, 'value': i} for i in ['Linear', 'Log']],
-                    value='Linear',
+                    value='Log',
                     labelStyle={'display': 'inline-block'}
                 )
 
@@ -211,6 +211,7 @@ def init_callbacks(dash_app,df):
             
         print("---- uml")
         print(uml)
+        
         if uml:
             dff["ec50"] = (dff["ec50"] / dff["molecular_weight"]) * 1000
             unit = "[umol/L]"
@@ -225,6 +226,7 @@ def init_callbacks(dash_app,df):
         #xfil.cas_number = xfil.cas_number.astype(str)
         #yfil.loc[:,('cas_number')]= yfil.loc[:,('cas_number')].astype(str)
         pdf = xfil.merge(yfil,on=['cas_number','endpoint'])
+        print(df.columns)
         
         if ycome != "nominal & measured":
             fvaly = 'me' if ycome == "measured" else "no"
@@ -257,7 +259,16 @@ def init_callbacks(dash_app,df):
                 },
                 margin={'l': 40, 'b': 30, 't': 10, 'r': 0},
                 height=450,
-                hovermode='closest'
+                hovermode='closest',
+                annotations = [dict(
+                        text = "n = %s" %pdf.shape[0],
+                        x = 1 if xaxis_type == 'Linear' else min(np.log10(pdf['ec50_x'])),
+                        y = max(pdf['ec50_y'])  if yaxis_type == 'Linear' else max(np.log10(pdf['ec50_y'])),
+                        showarrow = False
+                        
+                        )
+                    ]
+                
             )
         }
     @dash_app.callback(
@@ -316,8 +327,10 @@ def init_callbacks(dash_app,df):
             pdf = pdf[pdf['conc_determination_x'] == fvalx]
         
         
-        
+        #print("ENDPOINTS")
         #print(pdf)
+
+        
         return {
             'data': [dict(
                 x=pdf['ec50_x'],
@@ -342,7 +355,14 @@ def init_callbacks(dash_app,df):
                 },
                 margin={'l': 40, 'b': 30, 't': 10, 'r': 0},
                 height=450,
-                hovermode='closest'
+                hovermode='closest',
+                annotations = [dict(
+                        text = "n = %s" %pdf.shape[0],
+                        x = np.nanmin(pdf['ec50_x']) if xaxis_type == 'Linear' else np.nanmin(np.log10(pdf['ec50_x'])),
+                        y = np.nanmax(pdf['ec50_y'][pdf['ec50_y'] != np.inf]) if yaxis_type == 'Linear' else np.nanmax(np.log10(pdf['ec50_y'][pdf['ec50_y'] != np.inf])),
+                        showarrow = False
+                        
+                        )]
             )
         }
     

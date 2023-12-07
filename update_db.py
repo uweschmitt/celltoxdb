@@ -74,3 +74,5 @@ session.bulk_update_mappings(Exposure,year_maps)
 session.commit()
 
 
+
+

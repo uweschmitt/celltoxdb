@@ -17,7 +17,9 @@ from forms import SearchForm,UploadForm
 from app import app,db
 from warnings import warn
 import hashlib
-from app.models import Exposure, Chemical, Estimated, Sample, Cell_line, Endpoint, Solvent, Experimenter, Medium
+from app.models import Exposure, Chemical, Estimated,  Cell_line, \
+    Endpoint, Solvent, Person, Medium, Nanomaterial, Institution, \
+    Person_Institution
 from insert_db import add_record
 from fileIO import read_dr
 from flask_appbuilder.widgets import ListWidget,RenderTemplateWidget
@@ -37,17 +39,41 @@ class ChemicalView(ModelView):
                      "cas_number" : "CAS-Nr"
                      }
     list_columns = ["name","cas_number","user_corrected_experimental_log_kow","experimental_log_kow","estimated_log_kow"]
-    
-class SampleView(ModelView):
-    datamodel = SQLAInterface(Sample)
 
-    list_columns = ["cell_line.full_name","medium.full_name","fbs"]
-    
+class NanomaterialView(ModelView):
+    datamodel = SQLAInterface(Nanomaterial)
+    list_columns = ["core","coating","size","treatment"]
+
+
 class CellLineView(ModelView):
     datamodel = SQLAInterface(Cell_line)
+    list_columns = ["short_name","full_name"]
+
+class MediumView(ModelView):
+    datamodel = SQLAInterface(Medium)
+    list_columns = ["short_name","full_name"]
+    
+class EndpointView(ModelView):
+    datamodel = SQLAInterface(Endpoint)
+    list_columns = ["short_name","full_name"]
+    
+class SolventView(ModelView):
+    datamodel = SQLAInterface(Solvent)
+    list_columns = ["short_name","full_name"]
+    
+class PersonView(ModelView):
+    datamodel = SQLAInterface(Person)
+    list_columns = ["short_name","full_name","orcid","linkedin"]
+    
+class InstitutionView(ModelView):
+    datamodel = SQLAInterface(Institution)
     list_columns = ["full_name"]
-
-
+    
+class PersonInstitutionView(ModelView):
+    datamodel = SQLAInterface(Person_Institution)
+    
+class MultiPersonView(MultipleView):
+    views = [PersonView, InstitutionView,PersonInstitutionView]
 
 class CustomShowWidget(RenderTemplateWidget):
     """
@@ -66,10 +92,13 @@ class CustomShowWidget(RenderTemplateWidget):
 
 
 
-from search import apply_filters
+from search import apply_filters, apply_ordering, sort_combinations
 from query_lib import get_exposure_eager
 from app import cache
 from werkzeug.datastructures import MultiDict
+from sqlalchemy import asc,desc
+
+
 
 class BrowseCustom(BaseView):
     
@@ -87,8 +116,6 @@ class BrowseCustom(BaseView):
             cache.set("search_query",None)
             cache.set("form_data",None)
 
-
-
         if request.method == 'POST' and form.validate():
             page = request.args.get('page', 1, type=int)
            
@@ -99,6 +126,8 @@ class BrowseCustom(BaseView):
             #     flash(type(field.data))
             #     flash(field.data)
             q = apply_filters(q,form)
+
+                
             cache.set("search_query",[x.id for x in q.with_entities(Exposure.id).all()])
             form_dict = request.form.to_dict(flat=False)
             cache.set("form_data",form_dict)
@@ -113,21 +142,100 @@ class BrowseCustom(BaseView):
             ids = cache.get("search_query")
             q = q.filter(Exposure.id.in_(ids))
         
+        # sort = None    
+        
+        # if cache.get("sort") is not None:
+        #     sort = cache.get("sort")
+        #     sort_dir = cache.get("sort_dir")
+        
+        sort = None
+        sort_dir = None
+            
+        if request.args.get('sort') and request.args.get('sort_dir'):
+            sort = request.args.get('sort')
+            sort_dir = request.args.get('sort_dir')
+            q = apply_ordering(q, sort, sort_dir)
+            
+            # cache.set("sort",sort)
+            # cache.set("sort_dir",sort_dir)
+        
+        # if sort is not None:
+        #     q = apply_ordering(q, sort, sort_dir)
+
+
+
+
 
         if page is not None:
             page = 1
 
         entries = q.paginate(
             page, 25, False)
-        next_url = url_for('BrowseCustom.search', page=entries.next_num) \
+        
+        if sort is None:
+            
+            next_url = url_for('BrowseCustom.search', page=entries.next_num) \
+                    if entries.has_next else None
+            prev_url = url_for('BrowseCustom.search', page=entries.prev_num) \
+                    if entries.has_prev else None
+            first_url = url_for('BrowseCustom.search',page = 1) \
+                    if entries.page != 1 else None
+            last_url = url_for('BrowseCustom.search',page = entries.pages) \
+                    if entries.page != entries.pages else None
+        else:
+            next_url = url_for('BrowseCustom.search', page=entries.next_num,sort=sort,sort_dir=sort_dir) \
                 if entries.has_next else None
-        prev_url = url_for('BrowseCustom.search', page=entries.prev_num) \
-                if entries.has_prev else None
+            prev_url = url_for('BrowseCustom.search', page=entries.prev_num,sort=sort,sort_dir=sort_dir) \
+                    if entries.has_prev else None
+            first_url = url_for('BrowseCustom.search',page = 1,sort=sort,sort_dir=sort_dir) \
+                    if entries.page != 1 else None
+            last_url = url_for('BrowseCustom.search',page = entries.pages,sort=sort,sort_dir=sort_dir) \
+                    if entries.page != entries.pages else None
+                    
+                    
+        #Chemical 	Cell line 	Endpoint 	Timepoint [h] EC50            
+        sort_urls = [url_for('BrowseCustom.search',sort = x[0],sort_dir = x[1]) for x in sort_combinations]        
+        sort_names = [" ".join(x) for x in sort_combinations]
+        sort_info = list(zip(sort_urls,sort_names))
+        print(sort_info)
         clear_filters_url= url_for('BrowseCustom.search', page=entries.page, clear=True)
             # flash(q.count())
         return self.render_template("search.html",form = form,table =entries,
-                                    prev_url = prev_url,next_url = next_url,clear_filters_url = clear_filters_url)
+                                    prev_url = prev_url,next_url = next_url,
+                                    clear_filters_url = clear_filters_url,last_url=last_url,
+                                    first_url = first_url,sort_info=sort_info)
         # return "hello"
+
+    @expose('/csv', methods=['GET'])
+    def download_csv_custom(self):
+        
+        query = get_database_readable(db)
+        if cache.get("search_query") is not None:
+            ids = cache.get("search_query")
+            query = query.filter(Exposure.id.in_(ids))
+        df = pd.DataFrame(query)
+        response = make_response(df.to_csv())
+        cd = 'attachment; filename=celltox_database.csv'
+        response.headers['Content-Disposition'] = cd
+        response.mimetype='text/csv'
+        return response
+    
+    @expose('/xls', methods=['GET'])
+    def download_xls_custom(self):
+        query = get_database_readable(db)
+        if cache.get("search_query") is not None:
+            ids = cache.get("search_query")
+            query = query.filter(Exposure.id.in_(ids))
+        output = io.BytesIO()
+        writer = pd.ExcelWriter(output)
+        df = pd.DataFrame(query)
+        df.to_excel(writer, 'Tab1')
+        writer.close() 
+        response = make_response(output.getvalue())
+        response.headers['Content-Disposition'] = 'attachment; filename=celltox_database.xlsx'
+        response.headers["Content-type"] = "text/csv"
+        return response
+
 
 
 
@@ -139,7 +247,7 @@ class Browse(ModelView):
     
     
     add_exclude_columns = ['estimated']
-    edit_exclude_columns = ['estimated']
+    edit_exclude_columns = ['estimated','date_created']
     search_exclude_columns = ['chemical']
     
 
@@ -149,7 +257,7 @@ class Browse(ModelView):
     
     #cache.set("foo",querydb.count())
 
-    search_columns = ["sample","endpoint","chemical","timepoint", \
+    search_columns = ["endpoint","chemical","timepoint", \
                       "experimenter","solvent","estimated", \
                           "replicates","insert","dosing","conc_determination","passive_dosing"]
         
@@ -170,12 +278,12 @@ class Browse(ModelView):
     
     
     label_columns = {'chemical.name':'Chemical',
-                     "sample.cell_line.full_name":"Cell line",
+                     "ell_line.full_name":"Cell line",
                      "endpoint.full_name":"Endpoint",
                      "timepoint": "Timepoint [h]",
                      "ec50_format":"EC50 [mg/L]"
                      }
-    list_columns = ["chemical.name","sample.cell_line.full_name", \
+    list_columns = ["chemical.name","cell_line.full_name", \
                     "endpoint.full_name","timepoint","ec50_format"]
         
     #related_views = [ChemicalView]
@@ -216,8 +324,6 @@ class Browse(ModelView):
         response.headers["Content-type"] = "text/csv"
         return response
 
-class MultiView(MultipleView):
-    views = [Browse,ChemicalView]
 
 class EstimatedView(ModelView):
     datamodel = SQLAInterface(Estimated)
@@ -236,22 +342,75 @@ def allowed_file(filename):
            filename.rsplit('.', 1)[1].lower() in appbuilder.get_app.config['ALLOWED_EXTENSIONS']
 
 
+#from forms import UploadSingleForm
+from forms import makeUploadSingleForm
+from fileIO import read_rawdata
+from insert_db import add_record_rawdata,add_record_norawdata
+from scipy.stats import t
+from math import sqrt
+from test import validate_ec_calculation
+
 class UploadView(SimpleFormView):
    
-    form = UploadForm
+    with app.test_request_context():
+        form = makeUploadSingleForm()
     form_title = 'Upload dose response file'
     message = "My form was submitted"
     
     def form_get(self, form):
         form.file.data = "This was prefilled"
     
+
+    
     def form_post(self,form):
-        fname = os.path.join(appbuilder.get_app.config['UPLOAD_FOLDER'], form.file.data.filename)
-        form.file.data.save(fname)
-        fhash = hashlib.sha1(open(fname, 'rb').read()).hexdigest()
-        dat = read_dr(fname)
-        status = add_record(dat,db.session,db.engine)
-        return self.render_template('uploaded.html',  fname = fname , filehash = fhash , status = status)
+        dat = form.data
+        rvalidation = {}
+        if form.file.data is None:
+            dat['ec50'] = form.ec50.data
+            if form.error_type.data == 'std':
+                replicates = form.replicates.data
+                nconc = form.nconcentrations.data
+                n = replicates * nconc
+                s = form.error_value.data  
+                error = t.ppf(0.975,n-1) * s / sqrt(n)
+            else:
+                error = form.error_value.data
+            
+            dat['ec50_ci_lower'] = dat['ec50'] - error
+            dat['ec50_ci_upper'] = dat['ec50'] + error
+            
+            record = add_record_norawdata(dat,db.session)
+        
+            
+        else:
+            fname = os.path.join(appbuilder.get_app.config['UPLOAD_FOLDER'], form.file.data.filename)
+            form.file.data.save(fname)
+            
+            fhash = hashlib.sha1(open(fname, 'rb').read()).hexdigest()
+            
+            hash_query = db.session.query(Exposure).filter(Exposure.rawfile_hash == fhash)
+    
+            if hash_query.count() > 0:
+                return self.render_template('uploaded.html',  exposure = None,
+                                            status=False,
+                                            message = "The raw file your are trying to upload has already been added to the database.")
+            #dat = read_dr(fname)
+            dat['rawfile_hash'] = fhash
+            dat['raw_data'] = read_rawdata(fname)
+            dat['filename'] = fname
+            print(dat)
+            record = add_record_rawdata(dat,db.session,db.engine)
+            odir = os.path.join("tmp",os.path.splitext(os.path.basename(fname))[0])
+
+            rvalidation = validate_ec_calculation(odir)
+            
+        if record is not None:
+            status= True
+        else:
+            status = False
+        
+        
+        return self.render_template('uploaded.html',  exposure = record, status=status, message = "Upload successfull.",rvalidation = rvalidation)
     
 
 class PlotView(BaseView):
@@ -283,9 +442,16 @@ db.create_all()
 
 
 appbuilder.add_view(BrowseCustom(),"Search")
-appbuilder.add_view(Browse(), "Browse",category = "Tables")
+appbuilder.add_view(Browse(), "Exposure",category = "Admin")
 appbuilder.add_view(UploadView, "Upload")
 appbuilder.add_view(PlotView, "Plot")
-appbuilder.add_view(ChemicalView(), "Chemical",category = "Tables")
-appbuilder.add_view(SampleView(), "Sample",category = "Tables")
-appbuilder.add_view(EstimatedView(), "Estimated",category = "Tables")
+appbuilder.add_view(ChemicalView(), "Chemicals",category = "Admin")
+appbuilder.add_view(NanomaterialView(), "Nanomaterial",category = "Admin")
+
+
+appbuilder.add_view(CellLineView(), "Cell line",category = "Admin")
+appbuilder.add_view(MediumView(), "Medium",category = "Admin")
+appbuilder.add_view(EndpointView(), "Endpoint",category = "Admin")
+appbuilder.add_view(SolventView(), "Solvent",category = "Admin")
+appbuilder.add_view(PersonView(), "Person",category = "Admin")
+appbuilder.add_view(InstitutionView(), "Institution",category = "Admin")

@@ -8,8 +8,8 @@ Created on Sun Apr 12 14:13:36 2020
 
 
 
-from app.models import Chemical, Medium, Sample, Exposure, Cell_line \
-    , Experimenter, Dose_response, Estimated, Solvent, Endpoint
+from app.models import Chemical, Medium, Exposure, Cell_line \
+    , Person, Dose_response, Estimated, Solvent, Endpoint, Nanomaterial
 from fileIO import read_dr, read_estimated
 from flask_appbuilder.filemanager import ImageManager
 import subprocess
@@ -42,6 +42,20 @@ fields_record = [
 
 
 def calc_ec(fname):
+    """
+    
+
+    Parameters
+    ----------
+    fname : TYPE
+        DESCRIPTION.
+
+    Returns
+    -------
+    dict
+        DESCRIPTION.
+
+    """
     bname = os.path.splitext(os.path.basename(fname))[0]
     print(bname)
     outdir = os.path.join("tmp",bname)
@@ -51,10 +65,13 @@ def calc_ec(fname):
         print ("Directory %s exists" % outdir)
     errPIPE = open(os.path.join(outdir,"stderr.txt"),'w+')
     #sout = subprocess.run(["Rscript",os.path.join("R","fitdr.R"),outdir,os.path.join("..","rawdata",fname)],stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    sout = subprocess.Popen(["Rscript",os.path.join("R","fitdr.R"),outdir,fname],stdout=subprocess.PIPE, stderr=errPIPE)
+    rcall = " ".join(["Rscript",os.path.join("R","fitdr.R"),outdir,fname,"delta"])
+    sout = subprocess.Popen(["Rscript",os.path.join("R","fitdr.R"),outdir,fname,"delta"],stdout=subprocess.PIPE, stderr=errPIPE)
+    
     output, errors = sout.communicate()
     rbname = os.path.join(outdir,bname)
-    return {'plot_png_base' : bname + '.png',
+    return { 'rcall' : rcall,
+        'plot_png_base' : bname + '.png',
         'plot_png_full': rbname + '.png',
      'estimated': rbname + '_estimated.csv',
      'plot_data': rbname + '_plotdata.csv',
@@ -64,9 +81,26 @@ def calc_ec(fname):
 
 
 def make_imagename(filename):
+    """ Generate a unique name for an image"""
     return str(uuid.uuid1()) + "_sep_" + filename
 
 def make_estimated(exposure,ec_out):
+    """
+    
+
+    Parameters
+    ----------
+    exposure : TYPE
+        DESCRIPTION.
+    ec_out : TYPE
+        DESCRIPTION.
+
+    Returns
+    -------
+    estimated : TYPE
+        DESCRIPTION.
+
+    """
     if(ec_out['status'].returncode > 0):
         return None
     est_dict = read_estimated(ec_out['estimated'])
@@ -74,48 +108,127 @@ def make_estimated(exposure,ec_out):
     fcopy = os.path.join(app.config['IMG_UPLOAD_FOLDER'],iname)
     shutil.copy2(ec_out['plot_png_full'],fcopy)
     est_dict['plot_png'] = iname
-    binKeys = ['plot_data','r_data']
-    for k in binKeys:
-        est_dict[k] = open(ec_out[k], 'rb').read()
-    est_dict['exposure_id'] = exposure.id
-    del est_dict['slope_ci_lower']
-    del est_dict['slope_ci_upper']
+
     
+    
+    # if no EC50 values could be calculated, the slope CIs dont need to be removed
+    if 'exceeds_direction' not in est_dict.keys():
+        binKeys = ['plot_data','r_data']
+        for k in binKeys:
+            est_dict[k] = open(ec_out[k], 'rb').read()
+        del est_dict['slope_ci_lower']
+        del est_dict['slope_ci_upper']
+        
+    
+    est_dict['exposure_id'] = exposure.id
     estimated = Estimated(**est_dict)
     return estimated
 
-def add_record(rec,se,eng):
+
+# def add_record_upload(rec,se,eng):
+#     """
     
-    #check if rawfile has already been adde to the database
-    hash_query = se.query(Exposure).filter(Exposure.rawfile_hash == rec['rawfile_hash'])
+
+#     Parameters
+#     ----------
+#     rec : TYPE
+#         DESCRIPTION.
+#     se : TYPE
+#         DESCRIPTION.
+#     eng : TYPE
+#         DESCRIPTION.
+
+#     Returns
+#     -------
+#     bool
+#         DESCRIPTION.
+
+#     """
+#     hash_query = se.query(Exposure).filter(Exposure.rawfile_hash == rec['rawfile_hash'])
+#     if hash_query.count() > 0:
+#         return False
+    
+#     exposure = Exposure(rec)
+#     se.add(exposure)
+#     se.commit()
+#     raw_data = read_dr(rec["fname"])
+#     rec['raw_data']['exposure_id'] = exposure.id
+#     rec['raw_data'].to_sql("dose_response",
+#                 eng,
+#                 if_exists='append',
+#                 schema='public',
+#                 index=False,
+#                 chunksize=500)
+    
+#     ec_out = calc_ec(rec['filename'])
+    
+#     estimated = make_estimated(exposure,ec_out)
+#     if estimated is not None:
+        
+#         se.add(estimated)
+#         se.commit()
+#     else:
+#         warnings.warn("Could not calculate EC50 values")
+    
+def check_rawfile(hash_string,se):
+    hash_query = se.query(Exposure).filter(Exposure.rawfile_hash == hash_string)
+    warnings.warn("Rawfile was already added to the database")
     if hash_query.count() > 0:
         return False
+    else:
+        return True
     
-    sample = se.query(Sample).join(Medium).join(Cell_line) \
-        .filter(Sample.fbs == rec['fbs']) \
-        .filter(Cell_line.short_name == rec['cell_line']) \
-        .filter(Medium.short_name==rec['medium']).one_or_none()
-        
-    if(not sample):
-        sample = Sample(cell_line_id = se.query(Cell_line).filter_by(short_name=rec['cell_line']).one().short_name,
-                   medium_id = se.query(Medium).filter_by(short_name=rec['medium']).one().short_name,
-                   fbs = rec['fbs'])
-    se.add(sample)
+
     
-    experimenter = se.query(Experimenter).filter_by(short_name=rec['experimenter']).one()
+
+def add_record(rec,se,eng):
+    """
+    
+
+    Parameters
+    ----------
+    rec : dict
+        DESCRIPTION.
+    se : flask session object
+        The current database session
+    eng : database engine object
+        DESCRIPTION.
+
+    Returns
+    -------
+    bool
+        DESCRIPTION.
+
+    """
+    
+    #check if rawfile has already been added to the database already
+    file_check = check_rawfile(rec['rawfile_hash'],se)
+    if not file_check:
+        return False
+    
+    cell_line = se.query(Cell_line).filter(Cell_line.short_name == rec['cell_line']).one_or_none()
+    medium = se.query(Medium).filter(Medium.short_name==rec['medium']).one_or_none()
+
+
+    
+    experimenter = se.query(Person).filter_by(short_name=rec['experimenter']).one()
 
     to_add = {k: rec[k] for k in fields_record}
     to_add['solvent'] = se.query(Solvent).filter_by(short_name=rec['solvent']).one()
     to_add['endpoint'] =  se.query(Endpoint).filter_by(short_name=rec['endpoint']).one()
-    to_add['sample'] = sample
+    to_add['medium'] = medium
+    to_add['cell_line'] = cell_line
     to_add['experimenter'] = experimenter
     chem = se.query(Chemical).filter_by(cas_number=rec['cas_number']).one_or_none()
-    if(chem is None):
-        return False
+    if chem is None:
+        if rec['cas_number'].find("nano") ==0:
+            nano_id = int(rec['cas_number'].strip("nano"))
+            nano_rec = se.query(Nanomaterial).filter(Nanomaterial.id == nano_id).one_or_none()
+            to_add['nanomaterial'] = nano_rec
+        else:
+            return False
     else:
         to_add['chemical'] = chem
-
-    
 
     exposure = Exposure(**to_add)
     
@@ -143,3 +256,111 @@ def add_record(rec,se,eng):
     
     return True
 
+def create_exposure(rec,se):
+    """
+    
+
+    Parameters
+    ----------
+    rec : TYPE
+        DESCRIPTION.
+    se : TYPE
+        DESCRIPTION.
+
+    Returns
+    -------
+    exposure : TYPE
+        DESCRIPTION.
+
+    """
+    
+    for k,v in rec.items():
+        if isinstance(rec[k],str) and rec[k] == 'None':
+            rec[k] = None;
+        elif k.endswith("_id"):
+            rec[k] = int(rec[k])
+    #get set of fields which are columns in the database
+    ifields = set(Exposure.__dict__.keys()).intersection(set(rec.keys()))
+    to_add = {k: rec[k]  for k in ifields}
+    exposure = Exposure(**to_add)
+    se.add(exposure)
+    se.commit()
+    return exposure
+    
+    
+
+def add_record_rawdata(rec,se,eng):
+    """
+    
+
+    Parameters
+    ----------
+    rec : dict
+        DESCRIPTION.
+    se : flask session object
+        The current database session
+    eng : database engine object
+        DESCRIPTION.
+
+    Returns
+    -------
+    bool
+        DESCRIPTION.
+
+    """
+    
+    #check if rawfile has already been adde to the database
+    file_check = check_rawfile(rec['rawfile_hash'],se)
+    if not file_check:
+        return False
+
+    exposure = create_exposure(rec,se)
+
+
+    rec['raw_data']['exposure_id'] = exposure.id
+    rec['raw_data'].to_sql("dose_response",
+                eng,
+                if_exists='append',
+                schema='public',
+                index=False,
+                chunksize=500)
+    
+    ec_out = calc_ec(rec['filename'])
+    
+    estimated = make_estimated(exposure,ec_out)
+    if estimated is not None:
+        
+        se.add(estimated)
+        se.commit()
+    else:
+        warnings.warn("Could not calculate EC50 values")
+    
+    return exposure
+
+def add_record_norawdata(rec,se):
+    """
+    
+
+    Parameters
+    ----------
+    rec : TYPE
+        DESCRIPTION.
+    se : TYPE
+        DESCRIPTION.
+
+    Returns
+    -------
+    exposure : TYPE
+        DESCRIPTION.
+
+    """
+    
+    exposure = create_exposure(rec,se)
+    rec['exposure_id'] = exposure.id
+    ifields = set(Estimated.__dict__.keys()).intersection(set(rec.keys()))
+    estimated_dict = {k: rec[k] for k in ifields}
+    estimated = Estimated(**estimated_dict)
+    se.add(estimated)
+    se.commit()
+    
+    return exposure

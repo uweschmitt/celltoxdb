@@ -24,4 +24,9 @@ def chemical_title(name):
     return "".join(sl)
 
 
+def format_helper(x,precision):
+     if x > 1E5 or x < 1E-5:
+         return '{:.2e}'.format(x)
+     else:
+         return "{:.{}f}".format( x, precision+1)
 

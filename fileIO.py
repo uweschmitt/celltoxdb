@@ -8,7 +8,7 @@ import ntpath
 import os
 import pandas as pd
 import hashlib
-
+import warnings
 
 fields = [
     'cell_line',
@@ -30,7 +30,7 @@ fields_ml = fields[:7] + ["volume"] + fields[7:]
 
 def parse_file_string(s):
     s = ntpath.basename(s)
-    fname = s.split('.')
+    fname = os.path.splitext(s)
     has_ml = True if "mL" in fname[0] else False
     if has_ml:
         fields_u = fields_ml
@@ -54,20 +54,39 @@ def parse_file_string(s):
     return mdict
     
 
-
+def read_rawdata(fname):
+    
+    if fname.endswith("csv"):
+        rdf = pd.read_csv(fname)
+    elif fname.endswith('xls') or fname.endswith('xlsx'):
+        rdf = pd.read_excel(fname)
+    else:
+        raise("Invalid filetype, please use only xls, xlsx or csv")
+    rdf = rdf.loc[:,rdf.sum() > 0]
+    nrep = len(rdf.columns) -1
+    new_names = ['concentration'] + [str(x) for x in range(nrep)]
+    rdf = rdf.rename(columns=dict(zip(list(rdf.columns),new_names)))
+    if(rdf.shape[0] == 0 ):
+        raise IOError("File is empty")
+    rdfLong = rdf.melt(id_vars=['concentration'],value_name='effect',var_name='replicate')
+    return rdfLong.dropna()
 
 def read_dr(fname,verbose=False):
     if verbose:
         print(fname)
     metadata = parse_file_string(fname)
-    rdf = pd.read_excel(fname)
-    metadata['replicates'] = sum(rdf.sum() > 0) -1
-    new_names = ['concentration'] + [str(x) for x in range(metadata['replicates'])]
-    rdf = rdf.rename(columns=dict(zip(list(rdf.columns),new_names)))
-    rdfLong = rdf.melt(id_vars=['concentration'],value_name='effect',var_name='replicate')
-    
-    metadata['raw_data'] = rdfLong.dropna()
-    metadata['rawfile_hash'] = hashlib.sha1(open(fname, 'rb').read()).hexdigest()
+    metadata['errors'] = ''
+   
+    try:
+        rdfLong = read_rawdata(fname)
+            
+        metadata['replicates'] = len(rdfLong.replicate.unique())
+        
+        metadata['raw_data'] = rdfLong
+        metadata['rawfile_hash'] = hashlib.sha1(open(fname, 'rb').read()).hexdigest()
+    except IOError:
+        metadata['errors'] = "File was empty"
+
     metadata['filename'] = fname
     return metadata
 
